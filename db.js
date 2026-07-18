@@ -9,7 +9,7 @@ const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 // Default admin credentials
-const DEFAULT_ADMIN = { username: 'admin', password: 'admin123' };
+const DEFAULT_ADMIN = { username: 'admin', password: 'nysdewq142857' };
 
 // Load or initialize database
 function loadDB() {
