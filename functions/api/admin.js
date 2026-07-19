@@ -2,7 +2,7 @@
  * Cloudflare Pages Function — Admin Auth Routes
  * Handles: GET /api/admin, POST /api/admin/login, POST /api/admin/logout
  */
-import { verifyAdmin } from '../../db.js';
+import { verifyAdmin, seedIfEmpty } from '../../db.js';
 
 export async function onRequestGet(context) {
   // GET /api/admin — check login status
@@ -23,12 +23,13 @@ export async function onRequestGet(context) {
 export async function onRequestPost(context) {
   const url = new URL(context.request.url);
 
-  // POST /api/admin/login
+  // Initialize KV if empty
+  seedIfEmpty(context.env.DB);
+
   if (url.pathname.endsWith('/login')) {
     return handleLogin(context);
   }
 
-  // POST /api/admin/logout
   if (url.pathname.endsWith('/logout')) {
     return handleLogout(context);
   }
@@ -43,12 +44,11 @@ async function handleLogin(context) {
     return json({ error: '请输入用户名和密码' }, 400);
   }
 
-  const user = verifyAdmin(username, password);
+  const user = verifyAdmin(context.env.DB, username, password);
   if (!user) {
     return json({ error: '用户名或密码错误' }, 401);
   }
 
-  // Simple token (base64 encoded JSON, not cryptographically signed)
   const header = btoa(JSON.stringify({ alg: 'none' }));
   const payload = btoa(JSON.stringify({
     username: user.username,

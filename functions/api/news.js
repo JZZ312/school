@@ -1,7 +1,7 @@
 /**
  * Cloudflare Pages Function — News CRUD Routes
  */
-import { getNews, getNewsDetail, createNews, updateNews, deleteNews } from '../../db.js';
+import { getNews, getNewsDetail, createNews, updateNews, deleteNews, seedIfEmpty } from '../../db.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -10,7 +10,7 @@ function json(data, status = 200) {
   });
 }
 
-function checkAuth(request) {
+function checkAuth(request, env) {
   const cookie = request.headers.get('Cookie') || '';
   const token = cookie.match(/admin_token=([^;]+)/)?.[1];
   if (!token) return false;
@@ -23,11 +23,12 @@ function checkAuth(request) {
 }
 
 export async function onRequestGet(context) {
+  seedIfEmpty(context.env.DB);
   const { request, params } = context;
 
-  // GET /api/news — list
   if (!params.id) {
-    const allNews = getNews();
+    // GET /api/news — list
+    const allNews = getNews(context.env.DB);
     const summaries = allNews.map(n => ({
       id: n.id,
       title: n.title,
@@ -42,45 +43,43 @@ export async function onRequestGet(context) {
   }
 
   // GET /api/news/:id — detail
-  const item = getNewsDetail(parseInt(params.id));
+  const item = getNewsDetail(context.env.DB, parseInt(params.id));
   if (!item) return json({ error: '新闻不存在' }, 404);
   return json(item);
 }
 
 export async function onRequestPost(context) {
-  if (!checkAuth(context.request)) {
+  if (!checkAuth(context.request, context.env)) {
     return json({ error: '请先登录' }, 401);
   }
 
-  const { request } = context;
-  const body = await request.json();
+  const body = await context.request.json();
   const { title, content, summary, year, category, sortOrder } = body;
 
   if (!title || !content || !year || !category) {
     return json({ error: '请填写必填字段' }, 400);
   }
 
-  const newsItem = createNews({ title, content, summary, year, category, sortOrder });
+  const newsItem = createNews(context.env.DB, { title, content, summary, year, category, sortOrder });
   return json({ ok: true, id: newsItem.id }, 201);
 }
 
 export async function onRequestPut(context) {
-  if (!checkAuth(context.request)) {
+  if (!checkAuth(context.request, context.env)) {
     return json({ error: '请先登录' }, 401);
   }
 
-  const { request, params } = context;
-  const existing = getNewsDetail(parseInt(params.id));
+  const existing = getNewsDetail(context.env.DB, parseInt(context.params.id));
   if (!existing) return json({ error: '新闻不存在' }, 404);
 
-  const body = await request.json();
+  const body = await context.request.json();
   const { title, content, summary, year, category, sortOrder } = body;
 
   if (!title || !content || !year || !category) {
     return json({ error: '请填写必填字段' }, 400);
   }
 
-  updateNews(parseInt(params.id), {
+  updateNews(context.env.DB, parseInt(context.params.id), {
     title, content, summary, year, category,
     sortOrder: sortOrder ?? existing.sortOrder,
   });
@@ -88,14 +87,13 @@ export async function onRequestPut(context) {
 }
 
 export async function onRequestDelete(context) {
-  if (!checkAuth(context.request)) {
+  if (!checkAuth(context.request, context.env)) {
     return json({ error: '请先登录' }, 401);
   }
 
-  const { params } = context;
-  const existing = getNewsDetail(parseInt(params.id));
+  const existing = getNewsDetail(context.env.DB, parseInt(context.params.id));
   if (!existing) return json({ error: '新闻不存在' }, 404);
 
-  deleteNews(parseInt(params.id));
+  deleteNews(context.env.DB, parseInt(context.params.id));
   return json({ ok: true });
 }
