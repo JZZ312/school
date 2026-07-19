@@ -4,10 +4,6 @@ const bcrypt = require('bcryptjs');
 
 const DB_PATH = path.join(__dirname, 'data', 'school.json');
 
-// Ensure data directory exists
-const dataDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
 // Default admin credentials
 const DEFAULT_ADMIN = { username: 'admin', password: 'nysdewq142857' };
 
@@ -70,12 +66,12 @@ function loadDB() {
   };
 
   saveDB(db);
-  console.log('  默认管理员: ' + DEFAULT_ADMIN.username + ' / ' + DEFAULT_ADMIN.password);
-  console.log('  ⚠️  首次启动，请在后台修改默认密码！');
   return db;
 }
 
 function saveDB(db) {
+  const dataDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf-8');
 }
 
@@ -84,11 +80,6 @@ let db = loadDB();
 
 function getNews() {
   return [...db.news].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0) || b.id - a.id);
-}
-
-function getNewsSummary(id) {
-  const item = db.news.find(n => n.id === id);
-  return item ? { ...item, content: undefined } : null;
 }
 
 function getNewsDetail(id) {
@@ -149,7 +140,6 @@ function verifyAdmin(username, password) {
 
 module.exports = {
   getNews,
-  getNewsSummary,
   getNewsDetail,
   createNews,
   updateNews,

@@ -1,0 +1,9 @@
+[pages]
+production_branch = "main"
+
+[build]
+command = "echo 'done'"
+output_dir = "."
+
+[placement]
+mode = "transparent"

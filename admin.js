@@ -1,14 +1,28 @@
 const API = '/api';
 let isLoggedIn = false;
 
+// ── Check login status from cookie ──
+function checkLogin() {
+  const cookie = document.cookie;
+  const match = cookie.match(/admin_token=([^;]+)/);
+  if (!match) return false;
+  try {
+    const token = match[1];
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 // ── Init ──
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    const res = await fetch(`${API}/admin/check`);
+    const res = await fetch(`${API}/admin`);
     const data = await res.json();
     isLoggedIn = data.loggedIn;
   } catch {
-    isLoggedIn = false;
+    isLoggedIn = checkLogin();
   }
   showView(isLoggedIn ? 'dashboard' : 'login');
 });
@@ -31,7 +45,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   try {
     const res = await fetch(`${API}/admin/login`, {
       method: 'POST',
-      credentials: 'same-origin',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         username: form.username.value,
@@ -55,7 +69,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
 // ── Logout ──
 document.getElementById('btnLogout').addEventListener('click', async () => {
   try {
-    await fetch(`${API}/admin/logout`, { method: 'POST', credentials: 'same-origin' });
+    await fetch(`${API}/admin/logout`, { method: 'POST', credentials: 'include' });
   } catch {}
   isLoggedIn = false;
   showView('login');
@@ -143,7 +157,7 @@ window.deleteNews = async function(id) {
   try {
     const res = await fetch(`${API}/news/${id}`, {
       method: 'DELETE',
-      credentials: 'same-origin',
+      credentials: 'include',
     });
     if (res.ok) {
       loadNewsList();
@@ -165,7 +179,6 @@ document.getElementById('newsForm').addEventListener('submit', async (e) => {
   const method = id ? 'PUT' : 'POST';
   const url = id ? `${API}/news/${id}` : `${API}/news`;
 
-  // 收集表单数据为 JSON 对象（不用 FormData）
   const data = {
     title: form.querySelector('[name="title"]')?.value || '',
     content: form.querySelector('[name="content"]')?.value || '',
@@ -175,23 +188,19 @@ document.getElementById('newsForm').addEventListener('submit', async (e) => {
     sortOrder: form.querySelector('[name="sortOrder"]')?.value || 0,
   };
 
-  console.log('Submitting data:', data);
-
   try {
     const res = await fetch(url, {
       method,
-      credentials: 'same-origin',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
 
-    console.log('Save response status:', res.status, res.statusText);
     if (res.ok) {
       showForm(false);
       loadNewsList();
     } else {
       const errData = await res.json().catch(() => ({}));
-      console.error('Save error response:', errData);
       alert(errData.error || `保存失败 (${res.status})`);
     }
   } catch (err) {
