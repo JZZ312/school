@@ -2,7 +2,7 @@
  * Cloudflare Pages Function — Admin Auth Routes
  * Handles: GET /api/admin, POST /api/admin/login, POST /api/admin/logout
  */
-import { verifyAdmin } from '../../../db.js';
+import { verifyAdmin } from '../../db.js';
 
 export async function onRequestGet(context) {
   // GET /api/admin — check login status
