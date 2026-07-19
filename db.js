@@ -44,12 +44,7 @@ function createSeedDB() {
   return {
     news: SEED_NEWS,
     adminUsers: [
-      {
-        id: 1,
-        username: DEFAULT_ADMIN.username,
-        password_hash: hash,
-        role: 'admin',
-      },
+      { id: 1, username: DEFAULT_ADMIN.username, password_hash: hash, role: 'admin' },
     ],
     nextId: 4,
   };
@@ -70,7 +65,6 @@ function getNewsDetail(kv, id) {
 function createNews(kv, fields) {
   let data = kv.get('news', { type: 'json' }) || [];
   let nextId = parseInt(kv.get('nextId') || '1');
-
   const now = new Date().toISOString();
   const newsItem = {
     id: nextId++,
@@ -94,7 +88,6 @@ function updateNews(kv, id, fields) {
   let data = kv.get('news', { type: 'json' }) || [];
   const idx = data.findIndex(n => n.id === id);
   if (idx === -1) return null;
-
   const now = new Date().toISOString();
   if (fields.title !== undefined) data[idx].title = fields.title;
   if (fields.content !== undefined) data[idx].content = fields.content;
@@ -104,7 +97,6 @@ function updateNews(kv, id, fields) {
   if (fields.image !== undefined) data[idx].image = fields.image;
   if (fields.sortOrder !== undefined) data[idx].sortOrder = parseInt(fields.sortOrder) || 0;
   data[idx].updatedAt = now;
-
   kv.put('news', JSON.stringify(data));
   return data[idx];
 }
@@ -127,7 +119,6 @@ function verifyAdmin(kv, username, password) {
   return { id: user.id, username: user.username, role: user.role };
 }
 
-// Seed data if KV is empty
 function seedIfEmpty(kv) {
   const news = kv.get('news');
   if (!news) {
@@ -139,11 +130,5 @@ function seedIfEmpty(kv) {
 }
 
 module.exports = {
-  getNews,
-  getNewsDetail,
-  createNews,
-  updateNews,
-  deleteNews,
-  verifyAdmin,
-  seedIfEmpty,
+  getNews, getNewsDetail, createNews, updateNews, deleteNews, verifyAdmin, seedIfEmpty,
 };

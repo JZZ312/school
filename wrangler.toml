@@ -1,0 +1,11 @@
+name = "school-website"
+main = "worker.js"
+compatibility_date = "2025-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./"
+
+[[kv_namespaces]]
+binding = "DB"
+id = "PLACEHOLDER_KV_ID"
