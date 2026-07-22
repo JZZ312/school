@@ -1,11 +1,7 @@
-/**
- * Cloudflare Pages API Handler — 学校官网后端
- *
- * 部署说明：
- *   将此文件放入 repository 根目录的 /functions/api/ 路径下
- *   所有 /api/* 请求都会被自动路由到这里处理
- *   KV namespace binding "DB" 在 Pages Settings 中配置
- */
+// Cloudflare Pages Functions handler for /api/* routes
+// Filename: functions/api/[[...path]].js
+
+const crypto = globalThis.crypto;
 
 // ═══════════════════════════════════════════════════════════
 // Hashing — SHA-256 (zero dependency)
@@ -188,131 +184,140 @@ function checkAuth(request) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Route handler
+// Main handler — Cloudflare Pages Functions API
+// Receives (request, ctx) where ctx.env has KV/vars bindings
 // ═══════════════════════════════════════════════════════════
 
-export async function POST(request, context) {
-  const url = new URL(request.url);
-  const path = url.pathname;
+export default {
+  async fetch(request, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
+    const kv = ctx.env.DB;
+    const adminPassword = ctx.env.ADMIN_PASSWORD;
 
-  // Ensure seed on first request
-  if (!_seeded) {
-    const seed = await createSeedDB(context.env.ADMIN_PASSWORD);
-    context.env.DB.put(NS + 'news', JSON.stringify(seed.news));
-    context.env.DB.put(NS + 'adminUsers', JSON.stringify(seed.adminUsers));
-    context.env.DB.put(NS + 'nextId', String(seed.nextId));
-    _seeded = true;
-  }
-
-  // POST /api/admin/login
-  if (path === '/api/admin/login') {
-    const { username, password } = await request.json();
-    if (!username || !password) return json({ error: '请输入用户名和密码' }, 400);
-    const user = await verifyAdmin(context.env.DB, username, password);
-    if (!user) return json({ error: '用户名或密码错误' }, 401);
-    const header = btoa(JSON.stringify({ alg: 'none' }));
-    const payload = btoa(JSON.stringify({
-      username: user.username,
-      id: user.id,
-      exp: Date.now() + 24 * 60 * 60 * 1000,
-    }));
-    const token = header + '.' + payload;
-    const resp = json({ ok: true });
-    resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
-    return resp;
-  }
-
-  // POST /api/admin/logout
-  if (path === '/api/admin/logout') {
-    const resp = json({ ok: true });
-    resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-    return resp;
-  }
-
-  // POST /api/news — create
-  if (path === '/api/news') {
-    if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
-    const body = await request.json();
-    const { title, content, summary, year, category, sortOrder } = body;
-    if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
-    const newsItem = createNews(context.env.DB, { title, content, summary, year, category, sortOrder });
-    return json({ ok: true, id: newsItem.id }, 201);
-  }
-
-  return json({ error: 'Not Found' }, 404);
-}
-
-export async function GET(request, context) {
-  const url = new URL(request.url);
-  const path = url.pathname;
-
-  // GET /api/admin — check login
-  if (path === '/api/admin') {
-    const token = parseCookie(request, 'admin_token');
-    let loggedIn = false;
-    if (token) {
-      try { loggedIn = JSON.parse(atob(token.split('.')[1])).exp > Date.now(); } catch {}
+    // Ensure seed on first request
+    if (!_seeded) {
+      try {
+        const seed = await createSeedDB(adminPassword);
+        kv.put(NS + 'news', JSON.stringify(seed.news));
+        kv.put(NS + 'adminUsers', JSON.stringify(seed.adminUsers));
+        kv.put(NS + 'nextId', String(seed.nextId));
+        _seeded = true;
+      } catch (e) {
+        console.error('Seed failed:', e);
+      }
     }
-    return json({ loggedIn });
-  }
 
-  // GET /api/news — list (public)
-  if (path === '/api/news') {
-    const allNews = getNews(context.env.DB);
-    const summaries = allNews.map(n => ({
-      id: n.id, title: n.title, summary: n.summary, year: n.year,
-      category: n.category, image: n.image, sortOrder: n.sortOrder, createdAt: n.createdAt,
-    }));
-    return json(summaries);
-  }
+    // ── GET Routes ──
 
-  // GET /api/news/:id
-  const newsDetailMatch = path.match(/^\/api\/news\/(\d+)$/);
-  if (newsDetailMatch) {
-    const item = getNewsDetail(context.env.DB, parseInt(newsDetailMatch[1]));
-    if (!item) return json({ error: '新闻不存在' }, 404);
-    return json(item);
-  }
+    if (method === 'GET') {
+      // GET /api/admin — check login
+      if (path === '/api/admin') {
+        const token = parseCookie(request, 'admin_token');
+        let loggedIn = false;
+        if (token) {
+          try { loggedIn = JSON.parse(atob(token.split('.')[1])).exp > Date.now(); } catch {}
+        }
+        return json({ loggedIn });
+      }
 
-  return json({ error: 'Not Found' }, 404);
-}
+      // GET /api/news — list
+      if (path === '/api/news') {
+        const allNews = getNews(kv);
+        const summaries = allNews.map(n => ({
+          id: n.id, title: n.title, summary: n.summary, year: n.year,
+          category: n.category, image: n.image, sortOrder: n.sortOrder, createdAt: n.createdAt,
+        }));
+        return json(summaries);
+      }
 
-export async function PUT(request, context) {
-  const url = new URL(request.url);
-  const path = url.pathname;
+      // GET /api/news/:id
+      const detailMatch = path.match(/^\/api\/news\/(\d+)$/);
+      if (detailMatch) {
+        const item = getNewsDetail(kv,parseInt(detailMatch[1]));
+        if (!item) return json({ error: '新闻不存在' }, 404);
+        return json(item);
+      }
 
-  // PUT /api/news/:id — update
-  const newsUpdateMatch = path.match(/^\/api\/news\/(\d+)$/);
-  if (newsUpdateMatch && path !== '/api/news') {
-    if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
-    const existing = getNewsDetail(context.env.DB, parseInt(newsUpdateMatch[1]));
-    if (!existing) return json({ error: '新闻不存在' }, 404);
-    const body = await request.json();
-    const { title, content, summary, year, category, sortOrder } = body;
-    if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
-    updateNews(context.env.DB, parseInt(newsUpdateMatch[1]), {
-      title, content, summary, year, category,
-      sortOrder: sortOrder ?? existing.sortOrder,
-    });
-    return json({ ok: true });
-  }
+      return json({ error: 'Not Found' }, 404);
+    }
 
-  return json({ error: 'Not Found' }, 404);
-}
+    // ── POST Routes ──
 
-export async function DELETE(request, context) {
-  const url = new URL(request.url);
-  const path = url.pathname;
+    if (method === 'POST') {
+      // POST /api/admin/login
+      if (path === '/api/admin/login') {
+        const { username, password } = await request.json();
+        if (!username || !password) return json({ error: '请输入用户名和密码' }, 400);
+        const user = await verifyAdmin(kv, username, password);
+        if (!user) return json({ error: '用户名或密码错误' }, 401);
+        const header = btoa(JSON.stringify({ alg: 'none' }));
+        const payload = btoa(JSON.stringify({
+          username: user.username,
+          id: user.id,
+          exp: Date.now() + 24 * 60 * 60 * 1000,
+        }));
+        const token = header + '.' + payload;
+        const resp = json({ ok: true });
+        resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+        return resp;
+      }
 
-  // DELETE /api/news/:id — delete
-  const newsDetailMatch = path.match(/^\/api\/news\/(\d+)$/);
-  if (newsDetailMatch) {
-    if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
-    const existing = getNewsDetail(context.env.DB, parseInt(newsDetailMatch[1]));
-    if (!existing) return json({ error: '新闻不存在' }, 404);
-    deleteNews(context.env.DB, parseInt(newsDetailMatch[1]));
-    return json({ ok: true });
-  }
+      // POST /api/admin/logout
+      if (path === '/api/admin/logout') {
+        const resp = json({ ok: true });
+        resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+        return resp;
+      }
 
-  return json({ error: 'Not Found' }, 404);
-}
+      // POST /api/news — create
+      if (path === '/api/news') {
+        if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+        const body = await request.json();
+        const { title, content, summary, year, category, sortOrder } = body;
+        if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
+        const newsItem = createNews(kv,{ title, content, summary, year, category, sortOrder });
+        return json({ ok: true, id: newsItem.id }, 201);
+      }
+
+      return json({ error: 'Not Found' }, 404);
+    }
+
+    // ── PUT Routes ──
+
+    if (method === 'PUT') {
+      const updateMatch = path.match(/^\/api\/news\/(\d+)$/);
+      if (updateMatch && path !== '/api/news') {
+        if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+        const existing = getNewsDetail(kv,parseInt(updateMatch[1]));
+        if (!existing) return json({ error: '新闻不存在' }, 404);
+        const body = await request.json();
+        const { title, content, summary, year, category, sortOrder } = body;
+        if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
+        updateNews(kv,parseInt(updateMatch[1]), {
+          title, content, summary, year, category,
+          sortOrder: sortOrder ?? existing.sortOrder,
+        });
+        return json({ ok: true });
+      }
+      return json({ error: 'Not Found' }, 404);
+    }
+
+    // ── DELETE Routes ──
+
+    if (method === 'DELETE') {
+      const delMatch = path.match(/^\/api\/news\/(\d+)$/);
+      if (delMatch) {
+        if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+        const existing = getNewsDetail(kv,parseInt(delMatch[1]));
+        if (!existing) return json({ error: '新闻不存在' }, 404);
+        deleteNews(kv,parseInt(delMatch[1]));
+        return json({ ok: true });
+      }
+      return json({ error: 'Not Found' }, 404);
+    }
+
+    return json({ error: 'Method Not Allowed' }, 405);
+  },
+};
