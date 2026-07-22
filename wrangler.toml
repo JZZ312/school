@@ -1,8 +1,7 @@
 name = "school-website"
-main = "worker.js"
+main = "functions/[[...path]].ts"
 compatibility_date = "2025-07-01"
 
-# Override at deploy time: set a custom admin password
 [vars]
 ADMIN_PASSWORD = ""  # leave empty to use default seed password
 
