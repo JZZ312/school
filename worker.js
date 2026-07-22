@@ -1,0 +1,342 @@
+/**
+ * Cloudflare Worker — 学校官网后端（零依赖内联版）
+ * 包含静态文件服务 + API 路由
+ *
+ * 部署方式：
+ *   1. GitHub 集成（此文件无需任何 npm install）
+ *   2. 或 Cloudflare Dashboard Workers Editor 粘贴
+ */
+
+// ── 静态文件映射 ──
+const STATIC_FILES = {
+  '/': 'index.html',
+  '/admin': 'admin.html',
+  '/style.css': 'style.css',
+  '/script.js': 'script.js',
+  '/admin.js': 'admin.js',
+  '/admin.css': 'admin.css',
+  '/logo.png': 'logo.png',
+  '/hero-bg.jpg': 'hero-bg.jpg',
+  '/map.png': 'map.png',
+  '/placeholder-about.jpg': 'placeholder-about.jpg',
+  '/campus-1.jpg': 'campus-1.jpg',
+  '/campus-2.jpg': 'campus-2.jpg',
+  '/campus-3.jpg': 'campus-3.jpg',
+  '/campus-4.jpg': 'campus-4.jpg',
+  '/campus-5.jpg': 'campus-5.jpg',
+};
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+};
+
+// ═══════════════════════════════════════════════════════════
+// Hashing — 使用 SHA-256 替代 bcrypt（浏览器原生 Crypto，零依赖）
+// ═══════════════════════════════════════════════════════════
+
+async function hashPassword(password) {
+  const encoder = new TextEncoder();
+  // Add a fixed salt to ensure same input → same output across invocations
+  const data = encoder.encode('school_site_salt_' + password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyPassword(password, expectedHash) {
+  return await hashPassword(password) === expectedHash;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Seed Data
+// ═══════════════════════════════════════════════════════════
+
+const DEFAULT_ADMIN = { username: 'admin', password: 'nysdewq142857' };
+
+// KV key prefix to avoid naming collisions with other workers/projects
+const NS = 'sw_';
+
+const SEED_NEWS = [
+  {
+    id: 1,
+    title: '首届高考取得"开门红"',
+    content: '2022年，学校首届高考成绩斐然，多名学生被重点大学录取，受到市委市政府和区委区政府通令嘉奖，开创了宛城区基础教育的新篇章。',
+    summary: '首届高考成绩斐然，受到市委市政府和区委区政府通令嘉奖。',
+    year: '2022',
+    category: '高考',
+    sortOrder: 3,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 2,
+    title: '深化校际合作共谋发展',
+    content: '学校依托与南阳师范学院、南阳市一中的共享共建机制，持续汇聚优质教育资源，推动教育教学质量全面提升。双方在教育科研、师资培训、课程建设等方面展开深度合作。',
+    summary: '深化校际合作，持续汇聚优质教育资源。',
+    year: '2023',
+    category: '合作',
+    sortOrder: 2,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 3,
+    title: '数字化校园建设成效显著',
+    content: '学校建成内含50余台标准计算机的学生微机房2个，中心云机房、录播教室、标准化考场等信息化项目全部完工并投入使用，为智慧教学奠定了坚实基础。',
+    summary: '数字化校园建设成效显著，信息化项目全面完工。',
+    year: '2024',
+    category: '建设',
+    sortOrder: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
+// ═══════════════════════════════════════════════════════════
+// DB Helpers
+// ═══════════════════════════════════════════════════════════
+
+async function createSeedDB(overridePassword) {
+  const now = new Date().toISOString();
+  const password = overridePassword || DEFAULT_ADMIN.password;
+  const hash = await hashPassword(password);
+  return {
+    news: SEED_NEWS,
+    adminUsers: [
+      { id: 1, username: DEFAULT_ADMIN.username, password_hash: hash, role: 'admin' },
+    ],
+    nextId: 4,
+  };
+}
+
+function getNews(kv) {
+  const raw = kv.get(NS + 'news', { type: 'json' });
+  if (!raw) return [];
+  return [...raw].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0) || b.id - a.id);
+}
+
+function getNewsDetail(kv, id) {
+  const raw = kv.get(NS + 'news', { type: 'json' });
+  if (!raw) return null;
+  return raw.find(n => n.id === id) || null;
+}
+
+function createNews(kv, fields) {
+  let data = kv.get(NS + 'news', { type: 'json' }) || [];
+  let nextId = parseInt(kv.get(NS + 'nextId') || '1');
+  const now = new Date().toISOString();
+  const newsItem = {
+    id: nextId++,
+    title: fields.title,
+    content: fields.content,
+    summary: fields.summary || '',
+    year: fields.year,
+    category: fields.category,
+    image: fields.image || null,
+    sortOrder: parseInt(fields.sortOrder) || 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  data.push(newsItem);
+  kv.put(NS + 'news', JSON.stringify(data));
+  kv.put(NS + 'nextId', String(nextId));
+  return newsItem;
+}
+
+function updateNews(kv, id, fields) {
+  let data = kv.get(NS + 'news', { type: 'json' }) || [];
+  const idx = data.findIndex(n => n.id === id);
+  if (idx === -1) return null;
+  const now = new Date().toISOString();
+  if (fields.title !== undefined) data[idx].title = fields.title;
+  if (fields.content !== undefined) data[idx].content = fields.content;
+  if (fields.summary !== undefined) data[idx].summary = fields.summary;
+  if (fields.year !== undefined) data[idx].year = fields.year;
+  if (fields.category !== undefined) data[idx].category = fields.category;
+  if (fields.image !== undefined) data[idx].image = fields.image;
+  if (fields.sortOrder !== undefined) data[idx].sortOrder = parseInt(fields.sortOrder) || 0;
+  data[idx].updatedAt = now;
+  kv.put(NS + 'news', JSON.stringify(data));
+  return data[idx];
+}
+
+function deleteNews(kv, id) {
+  let data = kv.get(NS + 'news', { type: 'json' }) || [];
+  const idx = data.findIndex(n => n.id === id);
+  if (idx === -1) return false;
+  data.splice(idx, 1);
+  kv.put(NS + 'news', JSON.stringify(data));
+  return true;
+}
+
+async function verifyAdmin(kv, username, password) {
+  const raw = kv.get(NS + 'adminUsers', { type: 'json' });
+  if (!raw) return null;
+  const user = raw.find(u => u.username === username);
+  if (!user) return null;
+  if (!(await verifyPassword(password, user.password_hash))) return null;
+  return { id: user.id, username: user.username, role: user.role };
+}
+
+// Synchronous seed check — spawns async init in fetch()
+let _seedPromise = null;
+function seedIfEmpty(kv, overridePassword) {
+  const news = kv.get(NS + 'news');
+  if (!news && !_seedPromise) {
+    _seedPromise = (async () => {
+      const seed = await createSeedDB(overridePassword);
+      kv.put(NS + 'news', JSON.stringify(seed.news));
+      kv.put(NS + 'adminUsers', JSON.stringify(seed.adminUsers));
+      kv.put(NS + 'nextId', String(seed.nextId));
+    })();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Response Helpers
+// ═══════════════════════════════════════════════════════════
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function parseCookie(request, name) {
+  const cookie = request.headers.get('Cookie') || '';
+  for (const pair of cookie.split('; ')) {
+    const eqIndex = pair.indexOf('=');
+    if (eqIndex < 0) continue;
+    const key = pair.slice(0, eqIndex);
+    if (key === name) return pair.slice(eqIndex + 1);
+  }
+  return null;
+}
+
+function checkAuth(request) {
+  const token = parseCookie(request, 'admin_token');
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Main Router
+// ═══════════════════════════════════════════════════════════
+
+export default {
+  async fetch(request, env, ctx) {
+    // Seed KV on first request
+    seedIfEmpty(env.DB, env.ADMIN_PASSWORD);
+
+    const url = new URL(request.url);
+
+    // ── API Routes ──
+
+    // GET /api/admin — check login
+    if (url.pathname === '/api/admin' && request.method === 'GET') {
+      const token = parseCookie(request, 'admin_token');
+      let loggedIn = false;
+      if (token) {
+        try { loggedIn = JSON.parse(atob(token.split('.')[1])).exp > Date.now(); } catch {}
+      }
+      return json({ loggedIn });
+    }
+
+    // POST /api/admin/login
+    if (url.pathname === '/api/admin/login' && request.method === 'POST') {
+      const { username, password } = await request.json();
+      if (!username || !password) return json({ error: '请输入用户名和密码' }, 400);
+
+      const user = await verifyAdmin(env.DB, username, password);
+      if (!user) return json({ error: '用户名或密码错误' }, 401);
+
+      const header = btoa(JSON.stringify({ alg: 'none' }));
+      const payload = btoa(JSON.stringify({
+        username: user.username,
+        id: user.id,
+        exp: Date.now() + 24 * 60 * 60 * 1000,
+      }));
+      const token = header + '.' + payload;
+
+      const resp = json({ ok: true });
+      resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+      return resp;
+    }
+
+    // POST /api/admin/logout
+    if (url.pathname === '/api/admin/logout' && request.method === 'POST') {
+      const resp = json({ ok: true });
+      resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+      return resp;
+    }
+
+    // GET /api/news — list (public)
+    if (url.pathname === '/api/news' && request.method === 'GET') {
+      const allNews = getNews(env.DB);
+      const summaries = allNews.map(n => ({
+        id: n.id, title: n.title, summary: n.summary, year: n.year,
+        category: n.category, image: n.image, sortOrder: n.sortOrder, createdAt: n.createdAt,
+      }));
+      return json(summaries);
+    }
+
+    // GET /api/news/:id
+    const newsDetailMatch = url.pathname.match(/^\/api\/news\/(\d+)$/);
+    if (newsDetailMatch && request.method === 'GET') {
+      const item = getNewsDetail(env.DB, parseInt(newsDetailMatch[1]));
+      if (!item) return json({ error: '新闻不存在' }, 404);
+      return json(item);
+    }
+
+    // POST /api/news — create (authenticated)
+    if (url.pathname === '/api/news' && request.method === 'POST') {
+      if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+      const body = await request.json();
+      const { title, content, summary, year, category, sortOrder } = body;
+      if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
+      const newsItem = createNews(env.DB, { title, content, summary, year, category, sortOrder });
+      return json({ ok: true, id: newsItem.id }, 201);
+    }
+
+    // PUT /api/news/:id — update (authenticated)
+    const newsUpdateMatch = url.pathname.match(/^\/api\/news\/(\d+)$/);
+    if (newsUpdateMatch && request.method === 'PUT') {
+      if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+      const existing = getNewsDetail(env.DB, parseInt(newsUpdateMatch[1]));
+      if (!existing) return json({ error: '新闻不存在' }, 404);
+      const body = await request.json();
+      const { title, content, summary, year, category, sortOrder } = body;
+      if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
+      updateNews(env.DB, parseInt(newsUpdateMatch[1]), {
+        title, content, summary, year, category,
+        sortOrder: sortOrder ?? existing.sortOrder,
+      });
+      return json({ ok: true });
+    }
+
+    // DELETE /api/news/:id — delete (authenticated)
+    if (newsDetailMatch && request.method === 'DELETE') {
+      if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+      const existing = getNewsDetail(env.DB, parseInt(newsDetailMatch[1]));
+      if (!existing) return json({ error: '新闻不存在' }, 404);
+      deleteNews(env.DB, parseInt(newsDetailMatch[1]));
+      return json({ ok: true });
+    }
+
+    // ── Static Files ──
+    return env.ASSETS.fetch(request);
+  },
+};

@@ -1,5 +1,5 @@
 name = "school-website"
-main = "functions/[[...path]].ts"
+main = "worker.js"
 compatibility_date = "2025-07-01"
 
 [vars]
