@@ -1,57 +1,22 @@
 /**
- * Cloudflare Worker — 学校官网后端（零依赖内联版）
- * 包含静态文件服务 + API 路由
+ * Cloudflare Worker — 学校官网后端（零依赖单文件版）
+ * 包含静态文件服务 + API 路由 + 内存存储（零配置即可运行）
  *
  * 部署方式：
  *   1. GitHub 集成（此文件无需任何 npm install）
  *   2. 或 Cloudflare Dashboard Workers Editor 粘贴
  */
 
-// ── 静态文件映射 ──
-const STATIC_FILES = {
-  '/': 'index.html',
-  '/admin': 'admin.html',
-  '/style.css': 'style.css',
-  '/script.js': 'script.js',
-  '/admin.js': 'admin.js',
-  '/admin.css': 'admin.css',
-  '/logo.png': 'logo.png',
-  '/hero-bg.jpg': 'hero-bg.jpg',
-  '/map.png': 'map.png',
-  '/placeholder-about.jpg': 'placeholder-about.jpg',
-  '/campus-1.jpg': 'campus-1.jpg',
-  '/campus-2.jpg': 'campus-2.jpg',
-  '/campus-3.jpg': 'campus-3.jpg',
-  '/campus-4.jpg': 'campus-4.jpg',
-  '/campus-5.jpg': 'campus-5.jpg',
-};
-
-const MIME_TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-};
-
 // ═══════════════════════════════════════════════════════════
-// Hashing — 使用 SHA-256 替代 bcrypt（浏览器原生 Crypto，零依赖）
+// Hashing — SHA-256 with fixed salt (zero dependency)
 // ═══════════════════════════════════════════════════════════
 
 async function hashPassword(password) {
   const encoder = new TextEncoder();
-  // Add a fixed salt to ensure same input → same output across invocations
   const data = encoder.encode('school_site_salt_' + password);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function verifyPassword(password, expectedHash) {
-  return await hashPassword(password) === expectedHash;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -59,8 +24,6 @@ async function verifyPassword(password, expectedHash) {
 // ═══════════════════════════════════════════════════════════
 
 const DEFAULT_ADMIN = { username: 'admin', password: 'nysdewq142857' };
-
-// KV key prefix to avoid naming collisions with other workers/projects
 const NS = 'sw_';
 
 const SEED_NEWS = [
@@ -100,40 +63,38 @@ const SEED_NEWS = [
 ];
 
 // ═══════════════════════════════════════════════════════════
-// DB Helpers
+// In-Memory Storage (fallback when no KV binding available)
 // ═══════════════════════════════════════════════════════════
 
-async function createSeedDB(overridePassword) {
+let _memData = null;
+
+async function ensureMemoryDB() {
+  if (_memData) return _memData;
   const now = new Date().toISOString();
-  const password = overridePassword || DEFAULT_ADMIN.password;
-  const hash = await hashPassword(password);
-  return {
-    news: SEED_NEWS,
-    adminUsers: [
-      { id: 1, username: DEFAULT_ADMIN.username, password_hash: hash, role: 'admin' },
-    ],
+  const hash = await hashPassword(DEFAULT_ADMIN.password);
+  _memData = {
+    news: SEED_NEWS.map(n => ({ ...n })),
+    adminUsers: [{ id: 1, username: DEFAULT_ADMIN.username, password_hash: hash, role: 'admin' }],
     nextId: 4,
   };
+  return _memData;
 }
 
-function getNews(kv) {
-  const raw = kv.get(NS + 'news', { type: 'json' });
-  if (!raw) return [];
-  return [...raw].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0) || b.id - a.id);
+// ── Memory DB helpers ──
+
+function memGetNews() {
+  const data = _memData?.news || [];
+  return [...data].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0) || b.id - a.id);
 }
 
-function getNewsDetail(kv, id) {
-  const raw = kv.get(NS + 'news', { type: 'json' });
-  if (!raw) return null;
-  return raw.find(n => n.id === id) || null;
+function memGetNewsDetail(id) {
+  return (_memData?.news || []).find(n => n.id === id) || null;
 }
 
-function createNews(kv, fields) {
-  let data = kv.get(NS + 'news', { type: 'json' }) || [];
-  let nextId = parseInt(kv.get(NS + 'nextId') || '1');
+function memCreateNews(fields) {
   const now = new Date().toISOString();
-  const newsItem = {
-    id: nextId++,
+  const item = {
+    id: _memData.nextId++,
     title: fields.title,
     content: fields.content,
     summary: fields.summary || '',
@@ -144,59 +105,96 @@ function createNews(kv, fields) {
     createdAt: now,
     updatedAt: now,
   };
-  data.push(newsItem);
-  kv.put(NS + 'news', JSON.stringify(data));
-  kv.put(NS + 'nextId', String(nextId));
-  return newsItem;
+  _memData.news.push(item);
+  return item;
 }
 
-function updateNews(kv, id, fields) {
-  let data = kv.get(NS + 'news', { type: 'json' }) || [];
-  const idx = data.findIndex(n => n.id === id);
-  if (idx === -1) return null;
+function memUpdateNews(id, fields) {
   const now = new Date().toISOString();
-  if (fields.title !== undefined) data[idx].title = fields.title;
-  if (fields.content !== undefined) data[idx].content = fields.content;
-  if (fields.summary !== undefined) data[idx].summary = fields.summary;
-  if (fields.year !== undefined) data[idx].year = fields.year;
-  if (fields.category !== undefined) data[idx].category = fields.category;
-  if (fields.image !== undefined) data[idx].image = fields.image;
-  if (fields.sortOrder !== undefined) data[idx].sortOrder = parseInt(fields.sortOrder) || 0;
-  data[idx].updatedAt = now;
-  kv.put(NS + 'news', JSON.stringify(data));
-  return data[idx];
+  const idx = _memData.news.findIndex(n => n.id === id);
+  if (idx === -1) return null;
+  if (fields.title !== undefined) _memData.news[idx].title = fields.title;
+  if (fields.content !== undefined) _memData.news[idx].content = fields.content;
+  if (fields.summary !== undefined) _memData.news[idx].summary = fields.summary;
+  if (fields.year !== undefined) _memData.news[idx].year = fields.year;
+  if (fields.category !== undefined) _memData.news[idx].category = fields.category;
+  if (fields.image !== undefined) _memData.news[idx].image = fields.image;
+  if (fields.sortOrder !== undefined) _memData.news[idx].sortOrder = parseInt(fields.sortOrder) || 0;
+  _memData.news[idx].updatedAt = now;
+  return _memData.news[idx];
 }
 
-function deleteNews(kv, id) {
-  let data = kv.get(NS + 'news', { type: 'json' }) || [];
-  const idx = data.findIndex(n => n.id === id);
+function memDeleteNews(id) {
+  const idx = _memData.news.findIndex(n => n.id === id);
   if (idx === -1) return false;
-  data.splice(idx, 1);
-  kv.put(NS + 'news', JSON.stringify(data));
+  _memData.news.splice(idx, 1);
   return true;
 }
 
-async function verifyAdmin(kv, username, password) {
-  const raw = kv.get(NS + 'adminUsers', { type: 'json' });
-  if (!raw) return null;
-  const user = raw.find(u => u.username === username);
-  if (!user) return null;
-  if (!(await verifyPassword(password, user.password_hash))) return null;
-  return { id: user.id, username: user.username, role: user.role };
-}
+// ── KV-backed helpers (wrap KV binding in same interface) ──
 
-// Synchronous seed check — spawns async init in fetch()
-let _seedPromise = null;
-function seedIfEmpty(kv, overridePassword) {
-  const news = kv.get(NS + 'news');
-  if (!news && !_seedPromise) {
-    _seedPromise = (async () => {
-      const seed = await createSeedDB(overridePassword);
-      kv.put(NS + 'news', JSON.stringify(seed.news));
-      kv.put(NS + 'adminUsers', JSON.stringify(seed.adminUsers));
-      kv.put(NS + 'nextId', String(seed.nextId));
-    })();
-  }
+function kvWrap(kv) {
+  return {
+    getNews: () => {
+      const raw = kv.get(NS + 'news', { type: 'json' });
+      if (!raw) return [];
+      return [...raw].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0) || b.id - a.id);
+    },
+    getNewsDetail(id) {
+      const raw = kv.get(NS + 'news', { type: 'json' });
+      if (!raw) return null;
+      return raw.find(n => n.id === id) || null;
+    },
+    async createNews(fields) {
+      let data = kv.get(NS + 'news', { type: 'json' }) || [];
+      let nextId = parseInt(kv.get(NS + 'nextId') || '1');
+      const now = new Date().toISOString();
+      const item = {
+        id: nextId++,
+        title: fields.title, content: fields.content,
+        summary: fields.summary || '', year: fields.year,
+        category: fields.category, image: fields.image || null,
+        sortOrder: parseInt(fields.sortOrder) || 0,
+        createdAt: now, updatedAt: now,
+      };
+      data.push(item);
+      kv.put(NS + 'news', JSON.stringify(data));
+      kv.put(NS + 'nextId', String(nextId));
+      return item;
+    },
+    async updateNews(id, fields) {
+      let data = kv.get(NS + 'news', { type: 'json' }) || [];
+      const idx = data.findIndex(n => n.id === id);
+      if (idx === -1) return null;
+      const now = new Date().toISOString();
+      if (fields.title !== undefined) data[idx].title = fields.title;
+      if (fields.content !== undefined) data[idx].content = fields.content;
+      if (fields.summary !== undefined) data[idx].summary = fields.summary;
+      if (fields.year !== undefined) data[idx].year = fields.year;
+      if (fields.category !== undefined) data[idx].category = fields.category;
+      if (fields.image !== undefined) data[idx].image = fields.image;
+      if (fields.sortOrder !== undefined) data[idx].sortOrder = parseInt(fields.sortOrder) || 0;
+      data[idx].updatedAt = now;
+      kv.put(NS + 'news', JSON.stringify(data));
+      return data[idx];
+    },
+    async deleteNews(id) {
+      let data = kv.get(NS + 'news', { type: 'json' }) || [];
+      const idx = data.findIndex(n => n.id === id);
+      if (idx === -1) return false;
+      data.splice(idx, 1);
+      kv.put(NS + 'news', JSON.stringify(data));
+      return true;
+    },
+    async verifyAdmin(username, password) {
+      const users = kv.get(NS + 'adminUsers', { type: 'json' });
+      if (!users) return null;
+      const user = users.find(u => u.username === username);
+      if (!user) return null;
+      if (!(await hashPassword(password) === user.password_hash)) return null;
+      return { id: user.id, username: user.username, role: user.role };
+    },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -233,20 +231,137 @@ function checkAuth(request) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Main Router
+// Main Handler
 // ═══════════════════════════════════════════════════════════
 
 export default {
-  async fetch(request, env, ctx) {
-    // Seed KV on first request
-    seedIfEmpty(env.DB, env.ADMIN_PASSWORD);
-
+  async fetch(request, env) {
     const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
 
-    // ── API Routes ──
+    // Decide storage backend: KV if bound, otherwise memory
+    const useKv = !!(env.DB && typeof env.DB.put === 'function');
+    const db = useKv ? kvWrap(env.DB) : null;
+
+    // ── POST Routes ──
+
+    if (method === 'POST') {
+      // POST /api/admin/login
+      if (path === '/api/admin/login') {
+        const { username, password } = await request.json();
+        if (!username || !password) return json({ error: '请输入用户名和密码' }, 400);
+
+        let user;
+        if (db) {
+          user = await db.verifyAdmin(username, password);
+        } else {
+          await ensureMemoryDB();
+          const u = _memData.adminUsers.find(u => u.username === username);
+          if (!u) return json({ error: '用户名或密码错误' }, 401);
+          const expectedHash = await hashPassword(password);
+          if (expectedHash !== u.password_hash) return json({ error: '用户名或密码错误' }, 401);
+          user = { id: u.id, username: u.username, role: u.role };
+        }
+
+        if (!user) return json({ error: '用户名或密码错误' }, 401);
+
+        const header = btoa(JSON.stringify({ alg: 'none' }));
+        const payload = btoa(JSON.stringify({
+          username: user.username,
+          id: user.id,
+          exp: Date.now() + 24 * 60 * 60 * 1000,
+        }));
+        const token = header + '.' + payload;
+        const resp = json({ ok: true });
+        resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+        return resp;
+      }
+
+      // POST /api/admin/logout
+      if (path === '/api/admin/logout') {
+        const resp = json({ ok: true });
+        resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+        return resp;
+      }
+
+      // POST /api/news — create
+      if (path === '/api/news') {
+        if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+        const body = await request.json();
+        const { title, content, summary, year, category, sortOrder } = body;
+        if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
+
+        let item;
+        if (db) {
+          item = await db.createNews({ title, content, summary, year, category, sortOrder });
+        } else {
+          await ensureMemoryDB();
+          item = memCreateNews({ title, content, summary, year, category, sortOrder });
+        }
+        return json({ ok: true, id: item.id }, 201);
+      }
+
+      return json({ error: 'Not Found' }, 404);
+    }
+
+    // ── PUT Routes ──
+
+    if (method === 'PUT') {
+      const updateMatch = path.match(/^\/api\/news\/(\d+)$/);
+      if (updateMatch) {
+        if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+        const body = await request.json();
+        const { title, content, summary, year, category, sortOrder } = body;
+        if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
+
+        if (db) {
+          const existing = db.getNewsDetail(parseInt(updateMatch[1]));
+          if (!existing) return json({ error: '新闻不存在' }, 404);
+          await db.updateNews(parseInt(updateMatch[1]), {
+            title, content, summary, year, category,
+            sortOrder: sortOrder ?? existing.sortOrder,
+          });
+        } else {
+          await ensureMemoryDB();
+          const existing = memGetNewsDetail(parseInt(updateMatch[1]));
+          if (!existing) return json({ error: '新闻不存在' }, 404);
+          memUpdateNews(parseInt(updateMatch[1]), {
+            title, content, summary, year, category,
+            sortOrder: sortOrder ?? existing.sortOrder,
+          });
+        }
+        return json({ ok: true });
+      }
+      return json({ error: 'Not Found' }, 404);
+    }
+
+    // ── DELETE Routes ──
+
+    if (method === 'DELETE') {
+      const delMatch = path.match(/^\/api\/news\/(\d+)$/);
+      if (delMatch) {
+        if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
+
+        if (db) {
+          const existing = db.getNewsDetail(parseInt(delMatch[1]));
+          if (!existing) return json({ error: '新闻不存在' }, 404);
+          await db.deleteNews(parseInt(delMatch[1]));
+        } else {
+          await ensureMemoryDB();
+          const existing = memGetNewsDetail(parseInt(delMatch[1]));
+          if (!existing) return json({ error: '新闻不存在' }, 404);
+          memDeleteNews(parseInt(delMatch[1]));
+        }
+        return json({ ok: true });
+      }
+      return json({ error: 'Not Found' }, 404);
+    }
+
+    // ── GET Routes ──
 
     // GET /api/admin — check login
-    if (url.pathname === '/api/admin' && request.method === 'GET') {
+    if (path === '/api/admin') {
       const token = parseCookie(request, 'admin_token');
       let loggedIn = false;
       if (token) {
@@ -255,37 +370,15 @@ export default {
       return json({ loggedIn });
     }
 
-    // POST /api/admin/login
-    if (url.pathname === '/api/admin/login' && request.method === 'POST') {
-      const { username, password } = await request.json();
-      if (!username || !password) return json({ error: '请输入用户名和密码' }, 400);
-
-      const user = await verifyAdmin(env.DB, username, password);
-      if (!user) return json({ error: '用户名或密码错误' }, 401);
-
-      const header = btoa(JSON.stringify({ alg: 'none' }));
-      const payload = btoa(JSON.stringify({
-        username: user.username,
-        id: user.id,
-        exp: Date.now() + 24 * 60 * 60 * 1000,
-      }));
-      const token = header + '.' + payload;
-
-      const resp = json({ ok: true });
-      resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
-      return resp;
-    }
-
-    // POST /api/admin/logout
-    if (url.pathname === '/api/admin/logout' && request.method === 'POST') {
-      const resp = json({ ok: true });
-      resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-      return resp;
-    }
-
-    // GET /api/news — list (public)
-    if (url.pathname === '/api/news' && request.method === 'GET') {
-      const allNews = getNews(env.DB);
+    // GET /api/news — list
+    if (path === '/api/news') {
+      let allNews;
+      if (db) {
+        allNews = db.getNews();
+      } else {
+        await ensureMemoryDB();
+        allNews = memGetNews();
+      }
       const summaries = allNews.map(n => ({
         id: n.id, title: n.title, summary: n.summary, year: n.year,
         category: n.category, image: n.image, sortOrder: n.sortOrder, createdAt: n.createdAt,
@@ -294,49 +387,25 @@ export default {
     }
 
     // GET /api/news/:id
-    const newsDetailMatch = url.pathname.match(/^\/api\/news\/(\d+)$/);
-    if (newsDetailMatch && request.method === 'GET') {
-      const item = getNewsDetail(env.DB, parseInt(newsDetailMatch[1]));
+    const detailMatch = path.match(/^\/api\/news\/(\d+)$/);
+    if (detailMatch) {
+      let item;
+      if (db) {
+        item = db.getNewsDetail(parseInt(detailMatch[1]));
+      } else {
+        await ensureMemoryDB();
+        item = memGetNewsDetail(parseInt(detailMatch[1]));
+      }
       if (!item) return json({ error: '新闻不存在' }, 404);
       return json(item);
     }
 
-    // POST /api/news — create (authenticated)
-    if (url.pathname === '/api/news' && request.method === 'POST') {
-      if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
-      const body = await request.json();
-      const { title, content, summary, year, category, sortOrder } = body;
-      if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
-      const newsItem = createNews(env.DB, { title, content, summary, year, category, sortOrder });
-      return json({ ok: true, id: newsItem.id }, 201);
-    }
-
-    // PUT /api/news/:id — update (authenticated)
-    const newsUpdateMatch = url.pathname.match(/^\/api\/news\/(\d+)$/);
-    if (newsUpdateMatch && request.method === 'PUT') {
-      if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
-      const existing = getNewsDetail(env.DB, parseInt(newsUpdateMatch[1]));
-      if (!existing) return json({ error: '新闻不存在' }, 404);
-      const body = await request.json();
-      const { title, content, summary, year, category, sortOrder } = body;
-      if (!title || !content || !year || !category) return json({ error: '请填写必填字段' }, 400);
-      updateNews(env.DB, parseInt(newsUpdateMatch[1]), {
-        title, content, summary, year, category,
-        sortOrder: sortOrder ?? existing.sortOrder,
-      });
-      return json({ ok: true });
-    }
-
-    // DELETE /api/news/:id — delete (authenticated)
-    if (newsDetailMatch && request.method === 'DELETE') {
-      if (!checkAuth(request)) return json({ error: '请先登录' }, 401);
-      const existing = getNewsDetail(env.DB, parseInt(newsDetailMatch[1]));
-      if (!existing) return json({ error: '新闻不存在' }, 404);
-      deleteNews(env.DB, parseInt(newsDetailMatch[1]));
-      return json({ ok: true });
-    }
-
     // ── Static Files ──
-    return env.ASSETS.fetch(request);
+    // Delegate to ASSETS binding for static files
+    if (env.ASSETS) {
+      return await env.ASSETS.fetch(request);
+    }
+
+    return json({ error: 'Not Found' }, 404);
   },
 };

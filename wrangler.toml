@@ -5,9 +5,6 @@ compatibility_date = "2025-07-01"
 [vars]
 ADMIN_PASSWORD = ""  # leave empty to use default seed password
 
-[assets]
-directory = "./"
-
 [[kv_namespaces]]
 binding = "DB"
 id = "PLACEHOLDER_KV_ID"
