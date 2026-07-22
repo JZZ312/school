@@ -3,6 +3,10 @@ main = "worker.js"
 compatibility_date = "2025-07-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Override this at deploy time: wrangler deploy --env production
+[vars]
+ADMIN_PASSWORD = ""  # leave empty to use default seed password
+
 [assets]
 directory = "./"
 

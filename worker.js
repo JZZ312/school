@@ -41,9 +41,20 @@ function json(data, status = 200) {
   });
 }
 
-function checkAuth(request) {
+function parseCookie(request, name) {
   const cookie = request.headers.get('Cookie') || '';
-  const token = cookie.match(/admin_token=([^;]+)/)?.[1];
+  // Split on '; ' and find the named cookie to avoid garbage from value+path
+  for (const pair of cookie.split('; ')) {
+    const eqIndex = pair.indexOf('=');
+    if (eqIndex < 0) continue;
+    const key = pair.slice(0, eqIndex);
+    if (key === name) return pair.slice(eqIndex + 1);
+  }
+  return null;
+}
+
+function checkAuth(request) {
+  const token = parseCookie(request, 'admin_token');
   if (!token) return false;
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
@@ -91,7 +102,7 @@ async function handleStatic(request, env) {
 export default {
   async fetch(request, env, ctx) {
     // Seed KV on first request
-    seedIfEmpty(env.DB);
+    seedIfEmpty(env.DB, env.ADMIN_PASSWORD);
 
     const url = new URL(request.url);
 
@@ -99,8 +110,7 @@ export default {
 
     // GET /api/admin — check login
     if (url.pathname === '/api/admin' && request.method === 'GET') {
-      const cookie = request.headers.get('Cookie') || '';
-      const token = cookie.match(/admin_token=([^;]+)/)?.[1];
+      const token = parseCookie(request, 'admin_token');
       let loggedIn = false;
       if (token) {
         try { loggedIn = JSON.parse(atob(token.split('.')[1])).exp > Date.now(); } catch {}
@@ -125,14 +135,14 @@ export default {
       const token = header + '.' + payload;
 
       const resp = json({ ok: true });
-      resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+      resp.headers.set('Set-Cookie', `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
       return resp;
     }
 
     // POST /api/admin/logout
     if (url.pathname === '/api/admin/logout' && request.method === 'POST') {
       const resp = json({ ok: true });
-      resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+      resp.headers.set('Set-Cookie', 'admin_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
       return resp;
     }
 

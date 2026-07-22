@@ -3,16 +3,19 @@ let isLoggedIn = false;
 
 // ── Check login status from cookie ──
 function checkLogin() {
-  const cookie = document.cookie;
-  const match = cookie.match(/admin_token=([^;]+)/);
-  if (!match) return false;
-  try {
-    const token = match[1];
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.exp > Date.now();
-  } catch {
-    return false;
+  // Parse cookies properly: split on '; ' and match key=value
+  const cookies = document.cookie.split('; ');
+  for (const cookie of cookies) {
+    const [name, value] = cookie.split('=');
+    if (name !== 'admin_token') continue;
+    try {
+      const payload = JSON.parse(atob(value.split('.')[1]));
+      return payload.exp > Date.now();
+    } catch {
+      return false;
+    }
   }
+  return false;
 }
 
 // ── Init ──

@@ -1,6 +1,10 @@
-const bcrypt = require('bcryptjs');
+import bcrypt from 'bcryptjs';
 
+// Default seed data — password can be overridden at deploy time
 const DEFAULT_ADMIN = { username: 'admin', password: 'nysdewq142857' };
+
+// KV key prefix to avoid naming collisions
+const NS = 'sw_'; // school-website prefix
 
 const SEED_NEWS = [
   {
@@ -38,9 +42,10 @@ const SEED_NEWS = [
   },
 ];
 
-function createSeedDB() {
+function createSeedDB(overridePassword) {
   const now = new Date().toISOString();
-  const hash = bcrypt.hashSync(DEFAULT_ADMIN.password, 10);
+  const password = overridePassword || DEFAULT_ADMIN.password;
+  const hash = bcrypt.hashSync(password, 10);
   return {
     news: SEED_NEWS,
     adminUsers: [
@@ -51,20 +56,20 @@ function createSeedDB() {
 }
 
 function getNews(kv) {
-  const raw = kv.get('news', { type: 'json' });
+  const raw = kv.get(NS + 'news', { type: 'json' });
   if (!raw) return [];
   return [...raw].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0) || b.id - a.id);
 }
 
 function getNewsDetail(kv, id) {
-  const raw = kv.get('news', { type: 'json' });
+  const raw = kv.get(NS + 'news', { type: 'json' });
   if (!raw) return null;
   return raw.find(n => n.id === id) || null;
 }
 
 function createNews(kv, fields) {
-  let data = kv.get('news', { type: 'json' }) || [];
-  let nextId = parseInt(kv.get('nextId') || '1');
+  let data = kv.get(NS + 'news', { type: 'json' }) || [];
+  let nextId = parseInt(kv.get(NS + 'nextId') || '1');
   const now = new Date().toISOString();
   const newsItem = {
     id: nextId++,
@@ -79,13 +84,13 @@ function createNews(kv, fields) {
     updatedAt: now,
   };
   data.push(newsItem);
-  kv.put('news', JSON.stringify(data));
-  kv.put('nextId', String(nextId));
+  kv.put(NS + 'news', JSON.stringify(data));
+  kv.put(NS + 'nextId', String(nextId));
   return newsItem;
 }
 
 function updateNews(kv, id, fields) {
-  let data = kv.get('news', { type: 'json' }) || [];
+  let data = kv.get(NS + 'news', { type: 'json' }) || [];
   const idx = data.findIndex(n => n.id === id);
   if (idx === -1) return null;
   const now = new Date().toISOString();
@@ -97,21 +102,21 @@ function updateNews(kv, id, fields) {
   if (fields.image !== undefined) data[idx].image = fields.image;
   if (fields.sortOrder !== undefined) data[idx].sortOrder = parseInt(fields.sortOrder) || 0;
   data[idx].updatedAt = now;
-  kv.put('news', JSON.stringify(data));
+  kv.put(NS + 'news', JSON.stringify(data));
   return data[idx];
 }
 
 function deleteNews(kv, id) {
-  let data = kv.get('news', { type: 'json' }) || [];
+  let data = kv.get(NS + 'news', { type: 'json' }) || [];
   const idx = data.findIndex(n => n.id === id);
   if (idx === -1) return false;
   data.splice(idx, 1);
-  kv.put('news', JSON.stringify(data));
+  kv.put(NS + 'news', JSON.stringify(data));
   return true;
 }
 
 function verifyAdmin(kv, username, password) {
-  const raw = kv.get('adminUsers', { type: 'json' });
+  const raw = kv.get(NS + 'adminUsers', { type: 'json' });
   if (!raw) return null;
   const user = raw.find(u => u.username === username);
   if (!user) return null;
@@ -119,16 +124,16 @@ function verifyAdmin(kv, username, password) {
   return { id: user.id, username: user.username, role: user.role };
 }
 
-function seedIfEmpty(kv) {
-  const news = kv.get('news');
+function seedIfEmpty(kv, overridePassword) {
+  const news = kv.get(NS + 'news');
   if (!news) {
-    const seed = createSeedDB();
-    kv.put('news', JSON.stringify(seed.news));
-    kv.put('adminUsers', JSON.stringify(seed.adminUsers));
-    kv.put('nextId', String(seed.nextId));
+    const seed = createSeedDB(overridePassword);
+    kv.put(NS + 'news', JSON.stringify(seed.news));
+    kv.put(NS + 'adminUsers', JSON.stringify(seed.adminUsers));
+    kv.put(NS + 'nextId', String(seed.nextId));
   }
 }
 
-module.exports = {
+export {
   getNews, getNewsDetail, createNews, updateNews, deleteNews, verifyAdmin, seedIfEmpty,
 };
