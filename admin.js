@@ -1,4 +1,4 @@
-const API = 'https://school-api.3561208070jzz.workers.dev/api';
+const API = '/api';
 let isLoggedIn = false;
 
 // ── Check login status from cookie ──
