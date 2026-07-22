@@ -1,5 +1,5 @@
 // Cloudflare Pages Functions handler for /api/* routes
-// Filename: functions/api/[[...path]].js
+// The [[...path]] double-bracket syntax catches all paths under /api/
 
 const crypto = globalThis.crypto;
 
