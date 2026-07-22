@@ -1,5 +1,6 @@
-// Cloudflare Pages Functions handler for /api/* routes
-// The [[...path]] double-bracket syntax catches all paths under /api/
+// Cloudflare Pages Functions catch-all handler
+// Placed at functions/ root to match ALL routes.
+// Only processes /api/* paths; all other requests fall through as static assets.
 
 const crypto = globalThis.crypto;
 
