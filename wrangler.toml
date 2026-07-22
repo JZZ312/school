@@ -1,9 +1,8 @@
 name = "school-website"
 main = "worker.js"
 compatibility_date = "2025-07-01"
-compatibility_flags = ["nodejs_compat"]
 
-# Override this at deploy time: wrangler deploy --env production
+# Override at deploy time: set a custom admin password
 [vars]
 ADMIN_PASSWORD = ""  # leave empty to use default seed password
 

@@ -2,14 +2,5 @@
   "name": "school-website-cms",
   "version": "1.0.0",
   "description": "南阳市第二完全学校高级中学官网及后台管理系统",
-  "dependencies": {
-    "bcryptjs": "^2.4.3"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250718.0"
-  },
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
-  }
+  "private": true
 }
