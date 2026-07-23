@@ -86,7 +86,6 @@ function animateCounters() {
     function update(currentTime) {
       const elapsed = currentTime - startTime;
       const progress = Math.min(elapsed / duration, 1);
-      // Ease out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
       counter.textContent = Math.floor(eased * target);
 
@@ -162,56 +161,48 @@ if (heroSubtitle) {
     }
   }
 
-  // Start typing after hero animation
   setTimeout(typeWriter, 1200);
 }
 
-// ===== Dynamic News Loader =====
-async function loadNews() {
-  const grid = document.getElementById('newsGrid');
-  if (!grid) return;
+// ===== News Data (fetched from API) =====
+let ALL_NEWS = [];          // Full news list fetched from API
+let LOADED = false;         // Whether news data has been fetched
+const HOMEPAGE_LIMIT = 3;   // Items shown on homepage grid
+const MODAL_LIMIT = 10;     // Items shown in modal list at once
 
+// Fetch all published news from API on page load
+async function fetchNews() {
+  if (LOADED || ALL_NEWS.length > 0) return;
   try {
-    const res = await fetch('/api/news');
-    const news = await res.json();
-
-    grid.innerHTML = '';
-
-    if (news.length === 0) {
-      grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--gray-500);padding:40px;">暂无新闻</p>';
-      return;
-    }
-
-    news.forEach((item, index) => {
-      const card = document.createElement('div');
-      card.className = 'news-card scroll-animate';
-      card.style.transitionDelay = `${0.05 + index * 0.1}s`;
-
-      card.innerHTML = `
-        <div class="news-date">
-          <span class="news-day">${escHtml(item.year)}</span>
-          <span class="news-month">${escHtml(item.category)}</span>
-        </div>
-        <div class="news-body">
-          <h3>${escHtml(item.title)}</h3>
-          <p>${escHtml(item.summary || '')}</p>
-        </div>
-      `;
-
-      grid.appendChild(card);
-    });
-
-    // Re-observe new elements for scroll animation
-    grid.querySelectorAll('.scroll-animate').forEach(el => {
-      observer.observe(el);
-    });
-
+    const res = await fetch('/api/news?limit=100&page=1');
+    if (!res.ok) throw new Error('Failed to fetch news');
+    const data = await res.json();
+    ALL_NEWS = (data.items || []).map(item => ({
+      id: item.id,
+      title: item.title,
+      summary: item.summary,
+      content: item.content || '',
+      category: item.category,
+      cover_image: item.cover_image || '',
+      author: item.author || '编辑部',
+      status: item.status || 'published',
+      publish_time: item.publish_time || item.created_at || '',
+      created_at: item.created_at || '',
+      updated_at: item.updated_at || '',
+    }));
+    LOADED = true;
+    // Re-render after loading
+    renderHomepageNews(newsCurrentPage);
+    renderModalNewsList();
   } catch (err) {
     console.error('Failed to load news:', err);
-    grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:#dc3545;padding:40px;">新闻加载失败，请稍后重试</p>';
+    // Fallback: show empty state
+    LOADED = true;
+    renderHomepageNews(1);
   }
 }
 
+// ===== News Rendering =====
 function escHtml(str) {
   if (!str) return '';
   const div = document.createElement('div');
@@ -219,5 +210,285 @@ function escHtml(str) {
   return div.innerHTML;
 }
 
-// Load news after DOM ready
-document.addEventListener('DOMContentLoaded', loadNews);
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  return {
+    day: d.getDate(),
+    month: `${d.getMonth() + 1}月`,
+    full: `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`,
+  };
+}
+
+/** Create a news card element — matches original .news-card HTML structure */
+function createNewsCard(item) {
+  const card = document.createElement('div');
+  card.className = 'news-card scroll-animate';
+  const fd = formatDate(item.publish_time || item.date || item.created_at);
+
+  card.innerHTML = `
+    <div class="news-card-header">
+      <span class="news-category-badge">${escHtml(item.category)}</span>
+      <span class="news-card-date">${fd.full}</span>
+    </div>
+    <div class="news-card-body">
+      <h3>${escHtml(item.title)}</h3>
+      <p>${escHtml(item.summary)}</p>
+    </div>
+    <div class="news-card-footer">
+      <a href="javascript:void(0)" class="news-read-more" onclick="readFullNews(${item.id})">
+        阅读更多
+        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="1" y1="7" x2="13" y2="7"/>
+          <polyline points="9 3 13 7 9 11"/>
+        </svg>
+      </a>
+    </div>
+  `;
+  return card;
+}
+
+/** Render pagination controls — keeps original structure */
+function renderPagination(containerId, totalItems, currentPage, pageSize, callbackName) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const totalPages = Math.ceil(totalItems / pageSize);
+  container.innerHTML = '';
+
+  if (totalPages <= 1) return;
+
+  // Prev button
+  const prevBtn = document.createElement('button');
+  prevBtn.className = `page-btn ${currentPage === 1 ? 'disabled' : ''}`;
+  prevBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 4 6 8 10 12"/></svg>`;
+  if (currentPage > 1) {
+    prevBtn.onclick = () => window[callbackName](currentPage - 1);
+  }
+  container.appendChild(prevBtn);
+
+  // Page numbers
+  const startPage = Math.max(1, currentPage - 1);
+  const endPage = Math.min(totalPages, currentPage + 1);
+
+  if (startPage > 1) {
+    const firstBtn = document.createElement('button');
+    firstBtn.className = 'page-btn';
+    firstBtn.textContent = '1';
+    firstBtn.onclick = () => window[callbackName](1);
+    container.appendChild(firstBtn);
+
+    if (startPage > 2) {
+      const dots = document.createElement('span');
+      dots.className = 'page-dots';
+      dots.textContent = '…';
+      container.appendChild(dots);
+    }
+  }
+
+  for (let i = startPage; i <= endPage; i++) {
+    const btn = document.createElement('button');
+    btn.className = `page-btn ${i === currentPage ? 'active' : ''}`;
+    btn.textContent = String(i);
+    btn.onclick = () => window[callbackName](i);
+    container.appendChild(btn);
+  }
+
+  if (endPage < totalPages) {
+    if (endPage < totalPages - 1) {
+      const dots = document.createElement('span');
+      dots.className = 'page-dots';
+      dots.textContent = '…';
+      container.appendChild(dots);
+    }
+
+    const lastBtn = document.createElement('button');
+    lastBtn.className = 'page-btn';
+    lastBtn.textContent = String(totalPages);
+    lastBtn.onclick = () => window[callbackName](totalPages);
+    container.appendChild(lastBtn);
+  }
+
+  // Next button
+  const nextBtn = document.createElement('button');
+  nextBtn.className = `page-btn ${currentPage === totalPages ? 'disabled' : ''}`;
+  nextBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 10 8 6 12"/></svg>`;
+  if (currentPage < totalPages) {
+    nextBtn.onclick = () => window[callbackName](currentPage + 1);
+  }
+  container.appendChild(nextBtn);
+}
+
+// ===== Homepage News (grid view) =====
+let newsCurrentPage = 1;
+let newsCategoryFilter = '';
+
+function getFilteredNews() {
+  if (!newsCategoryFilter) return ALL_NEWS;
+  return ALL_NEWS.filter(n => n.category === newsCategoryFilter);
+}
+
+function renderHomepageNews(page) {
+  const grid = document.getElementById('newsGrid');
+  if (!grid) return;
+
+  grid.innerHTML = '';
+  newsCurrentPage = page || 1;
+
+  const filtered = getFilteredNews();
+  const start = (newsCurrentPage - 1) * HOMEPAGE_LIMIT;
+  const items = filtered.slice(start, start + HOMEPAGE_LIMIT);
+
+  if (items.length === 0) {
+    grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--gray-500);padding:60px 0;">暂无新闻</p>';
+    return;
+  }
+
+  items.forEach((item, index) => {
+    const card = createNewsCard(item);
+    card.style.transitionDelay = `${index * 0.08}s`;
+    grid.appendChild(card);
+  });
+
+  // Re-observe for scroll animation
+  grid.querySelectorAll('.scroll-animate').forEach(el => {
+    observer.observe(el);
+  });
+
+  renderPagination('newsPagination', filtered.length, newsCurrentPage, HOMEPAGE_LIMIT, 'renderHomepageNews');
+}
+
+// ===== Modal News (list view) =====
+let modalCurrentPage = 1;
+let modalCategoryFilter = '';
+
+function getModalFilteredNews() {
+  if (!modalCategoryFilter) return ALL_NEWS;
+  return ALL_NEWS.filter(n => n.category === modalCategoryFilter);
+}
+
+function renderModalNewsList() {
+  const list = document.getElementById('modalNewsList');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  const filtered = getModalFilteredNews();
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<p style="text-align:center;color:var(--gray-500);padding:40px 20px;">暂无该分类的新闻</p>';
+    const pagEl = document.getElementById('modalPagination');
+    if (pagEl) pagEl.innerHTML = '';
+    return;
+  }
+
+  filtered.forEach(item => {
+    const fd = formatDate(item.publish_time || item.date || item.created_at);
+    const el = document.createElement('div');
+    el.className = 'news-modal-item';
+    el.setAttribute('data-news-id', item.id);
+    el.innerHTML = `
+      <div class="news-modal-item-date">
+        <span class="news-modal-item-day">${fd.day}</span>
+        <span class="news-modal-item-month">${fd.month}</span>
+      </div>
+      <div class="news-modal-item-content">
+        <span class="news-modal-item-category">${escHtml(item.category)}</span>
+        <div class="news-modal-item-title">${escHtml(item.title)}</div>
+        <div class="news-modal-item-summary">${escHtml(item.summary)}</div>
+      </div>
+    `;
+    list.appendChild(el);
+  });
+
+  // Simple pagination in modal
+  const pagEl = document.getElementById('modalPagination');
+  if (pagEl) pagEl.innerHTML = '';
+}
+
+function openAllNews() {
+  document.getElementById('newsModalOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  renderModalNewsList();
+}
+
+function closeAllNews() {
+  document.getElementById('newsModalOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+/** "阅读更多" — open modal and scroll to the specific news item */
+window.readFullNews = function(id) {
+  // Open modal first
+  openAllNews();
+  // Scroll to the matching item
+  setTimeout(() => {
+    const item = document.querySelector(`.news-modal-item[data-news-id="${id}"]`);
+    if (item) {
+      item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Briefly highlight the item
+      item.classList.add('highlighted');
+      setTimeout(() => item.classList.remove('highlighted'), 2000);
+    }
+  }, 150);
+};
+
+function setModalCategory(cat) {
+  newsCategoryFilter = cat;
+  modalCategoryFilter = cat;
+
+  // Update filter buttons in both toolbar and modal
+  document.querySelectorAll('#newsFilters .filter-btn, #modalFilters .filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.category === cat);
+  });
+
+  renderHomepageNews(1);
+  renderModalNewsList();
+}
+
+// ===== Event Listeners =====
+
+// View all news button
+const viewAllBtn = document.getElementById('viewAllNewsBtn');
+if (viewAllBtn) {
+  viewAllBtn.addEventListener('click', openAllNews);
+}
+
+// Close modal
+const modalClose = document.getElementById('newsModalClose');
+const modalOverlay = document.getElementById('newsModalOverlay');
+if (modalClose) {
+  modalClose.addEventListener('click', closeAllNews);
+}
+if (modalOverlay) {
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) closeAllNews();
+  });
+}
+
+// Escape key closes modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeAllNews();
+});
+
+// Filter buttons in homepage toolbar
+document.getElementById('newsFilters')?.addEventListener('click', (e) => {
+  if (e.target.classList.contains('filter-btn')) {
+    setModalCategory(e.target.dataset.category);
+  }
+});
+
+// Filter buttons in modal
+document.getElementById('modalFilters')?.addEventListener('click', (e) => {
+  if (e.target.classList.contains('filter-btn')) {
+    modalCategoryFilter = e.target.dataset.category;
+    document.getElementById('modalFilters').querySelectorAll('.filter-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.category === modalCategoryFilter);
+    });
+    renderModalNewsList();
+  }
+});
+
+// ===== Initialize: fetch news from API on DOM ready =====
+document.addEventListener('DOMContentLoaded', async () => {
+  await fetchNews(); // Fetch from API, then render
+});

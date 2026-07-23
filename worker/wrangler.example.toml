@@ -1,0 +1,31 @@
+# ============================
+# Cloudflare Wrangler Configuration
+# Copy this file to wrangler.toml and fill in the values.
+# ============================
+
+name = "school-site-cms"
+main = "src/index.ts"
+node_compat = true
+compatibility_date = "2025-01-01"
+compatibility_flags = ["experimental_modules"]
+
+# ── Cloudflare D1 Database (SQLite) ──
+# Create first: wrangler d1 create school-cms-db
+# Then uncomment and set binding/ID below.
+[d1_databases]
+binding = "DB"
+database_name = "school-cms-db"
+database_id = "<D1_DATABASE_UUID>"
+
+# ── Cloudflare R2 Bucket (image storage) ──
+# Create first: r2 bucket create school-cms-images
+# Then uncomment and set binding/name below.
+[r2_buckets]
+binding = "IMAGE_BUCKET"
+bucket_name = "school-cms-images"
+preview_bucket_name = "school-cms-images-preview"
+
+[vars]
+JWT_SECRET = "<your-jwt-secret-32-chars-minimum>"
+ADMIN_DEFAULT_PASSWORD = "nysdewq142857"
+CORS_ORIGIN = "*"

@@ -1,0 +1,22 @@
+name = "school-site-cms"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# For local dev, D1/R2 bindings are optional — they just won't be available.
+# In production, uncomment and fill in the UUIDs below.
+# [d1_databases]
+# binding = "DB"
+# database_name = "school-cms-db"
+# database_id = "YOUR_D1_UUID_HERE"
+
+# [r2_buckets]
+# binding = "IMAGE_BUCKET"
+# bucket_name = "school-cms-images"
+
+# ── Dev mode: USE_MEM_DB=true enables in-memory DB (no D1 needed) ──
+[vars]
+USE_MEM_DB = "true"           # ← Set to "false" for production with real D1
+JWT_SECRET = "CHANGE_ME_TO_RANDOM_32_CHARS_MINIMUM"
+ADMIN_DEFAULT_PASSWORD = "nysdewq142857"
+CORS_ORIGIN = "*"

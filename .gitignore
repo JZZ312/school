@@ -1,5 +1,9 @@
 node_modules/
 dist/
-.wrangler/
-*.log
+*.d1
+*.wrangler/
 .env
+admin/node_modules/
+admin/dist/
+worker/node_modules/
+*.log

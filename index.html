@@ -349,13 +349,58 @@
         <h2 class="section-title">新闻资讯</h2>
         <div class="section-line"></div>
       </div>
-      <div class="news-grid" id="newsGrid">
-        <div class="news-card scroll-animate" style="grid-column:1/-1;text-align:center;padding:40px;">
-          <p style="color:var(--gray-500);">正在加载...</p>
+      <div class="news-toolbar scroll-animate">
+        <div class="news-filters" id="newsFilters">
+          <button class="filter-btn active" data-category="">全部</button>
+          <button class="filter-btn" data-category="学校动态">学校动态</button>
+          <button class="filter-btn" data-category="教学教研">教学教研</button>
+          <button class="filter-btn" data-category="学生活动">学生活动</button>
+          <button class="filter-btn" data-category="荣誉成就">荣誉成就</button>
+          <button class="filter-btn" data-category="通知公告">通知公告</button>
         </div>
+        <button class="view-all-btn" id="viewAllNewsBtn">
+          查看全部新闻
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 4 10 8 6 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="news-grid" id="newsGrid">
+        <!-- Filled by script.js -->
+      </div>
+      <div class="news-pagination scroll-animate" id="newsPagination">
+        <!-- Filled by script.js -->
       </div>
     </div>
   </section>
+
+  <!-- ========== ALL NEWS MODAL ========== -->
+  <div class="news-modal-overlay" id="newsModalOverlay">
+    <div class="news-modal">
+      <div class="news-modal-header">
+        <h2 class="news-modal-title">全部新闻</h2>
+        <button class="news-modal-close" id="newsModalClose">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="news-modal-filters" id="modalFilters">
+        <button class="filter-btn active" data-category="">全部</button>
+        <button class="filter-btn" data-category="学校动态">学校动态</button>
+        <button class="filter-btn" data-category="教学教研">教学教研</button>
+        <button class="filter-btn" data-category="学生活动">学生活动</button>
+        <button class="filter-btn" data-category="荣誉成就">荣誉成就</button>
+        <button class="filter-btn" data-category="通知公告">通知公告</button>
+      </div>
+      <div class="news-modal-list" id="modalNewsList">
+        <!-- Filled by script.js -->
+      </div>
+      <div class="news-pagination news-pagination-modal scroll-animate" id="modalPagination">
+        <!-- Filled by script.js -->
+      </div>
+    </div>
+  </div>
 
   <!-- ========== CONTACT ========== -->
   <section class="section contact" id="contact">
